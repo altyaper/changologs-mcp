@@ -214,6 +214,7 @@ export default {
       const server = createMcpServer(token, baseUrl);
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless
+        enableJsonResponse: true,
       });
 
       await server.connect(transport);
