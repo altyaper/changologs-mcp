@@ -19,14 +19,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.12",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "hono": "^4.12.10"
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260402.1",
     "@types/node": "^25.5.0",
-    "https-proxy-agent": "^9.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.9.3"
   },
