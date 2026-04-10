@@ -183,7 +183,7 @@ export default {
 
     // OAuth metadata — MCP clients discover the auth server from here
     if (url.pathname === "/.well-known/oauth-authorization-server") {
-      const metadata: Record<string, unknown> = {
+      return Response.json({
         issuer: baseUrl,
         authorization_endpoint: `${baseUrl}/oauth/authorize`,
         token_endpoint: `${baseUrl}/oauth/token`,
@@ -193,16 +193,7 @@ export default {
         grant_types_supported: ["authorization_code"],
         scopes_supported: ["api"],
         code_challenge_methods_supported: ["S256"],
-      };
-
-      // If client_id is provided (via env var or previous registration), include it
-      if (env.CHANGOLOGS_CLIENT_ID) {
-        metadata.client_id = env.CHANGOLOGS_CLIENT_ID;
-        metadata.client_type = "public";
-        metadata.redirect_uri = "claude://callback";
-      }
-
-      return Response.json(metadata);
+      });
     }
 
     if (url.pathname === "/mcp") {
