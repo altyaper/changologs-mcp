@@ -6,8 +6,38 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-const BASE_URL = process.env.CHANGOLOGS_BASE_URL ?? "http://localhost:3000";
+const BASE_URL = (process.env.CHANGOLOGS_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
+const REDIRECT_URI = "claude://callback";
+
+let registeredClientId: string | null = null;
+
+// ── Dynamic OAuth Registration (RFC 7591) ───────────────────────────────────
+
+async function registerOAuthClient(): Promise<string> {
+  console.log(`Registering MCP with OAuth server at ${BASE_URL}/oauth/register`);
+  const res = await fetch(`${BASE_URL}/oauth/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      client_name: "changologs-mcp",
+      redirect_uris: [REDIRECT_URI],
+      client_uri: "https://github.com/anthropics/claude-mcp",
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OAuth registration failed ${res.status}: ${body}`);
+  }
+
+  const data = await res.json();
+  console.log(`OAuth registration successful. Client ID: ${data.client_id}`);
+  return data.client_id;
+}
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -209,16 +239,27 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   // OAuth metadata discovery — MCP clients use this to find the auth server
   if (url.pathname === "/.well-known/oauth-authorization-server") {
+    if (!registeredClientId) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "MCP server registration in progress" }));
+      return;
+    }
+
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       issuer: BASE_URL,
       authorization_endpoint: `${BASE_URL}/oauth/authorize`,
       token_endpoint: `${BASE_URL}/oauth/token`,
       revocation_endpoint: `${BASE_URL}/oauth/revoke`,
+      registration_endpoint: `${BASE_URL}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code"],
       scopes_supported: ["api"],
       code_challenge_methods_supported: ["S256"],
+      // MCP-specific: include the pre-registered client_id
+      client_id: registeredClientId,
+      client_type: "public",
+      redirect_uri: REDIRECT_URI,
     }));
     return;
   }
@@ -255,10 +296,23 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.end(JSON.stringify({ error: "not_found" }));
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`changologs MCP server listening on http://localhost:${PORT}/mcp`);
-  console.log(`OAuth discovery: ${BASE_URL}/.well-known/oauth-authorization-server`);
-});
+// Start server and register with OAuth
+(async () => {
+  try {
+    registeredClientId = await registerOAuthClient();
+  } catch (err) {
+    console.error("Failed to register with OAuth server:", err);
+    console.error("Continuing anyway — client can still register dynamically.");
+  }
+
+  httpServer.listen(PORT, () => {
+    console.log(`changologs MCP server listening on http://localhost:${PORT}/mcp`);
+    console.log(`OAuth discovery: ${BASE_URL}/.well-known/oauth-authorization-server`);
+    if (registeredClientId) {
+      console.log(`Registered client ID: ${registeredClientId}`);
+    }
+  });
+})();
 
 process.on("uncaughtException", (err) => { console.error("Uncaught exception:", err); process.exit(1); });
 process.on("unhandledRejection", (reason) => { console.error("Unhandled rejection:", reason); process.exit(1); });
