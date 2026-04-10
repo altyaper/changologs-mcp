@@ -12,8 +12,8 @@
   ],
   "scripts": {
     "start": "tsx server.ts",
-    "dev:worker": "wrangler dev worker.ts",
-    "deploy": "wrangler deploy worker.ts",
+    "dev:worker": "npx wrangler dev worker.ts",
+    "deploy": "npx wrangler deploy worker.ts",
     "build": "tsc --noEmit",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "prepublishOnly": "npm run build"
@@ -28,8 +28,7 @@
     "@types/node": "^25.5.0",
     "https-proxy-agent": "^9.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.9.3",
-    "wrangler": "^4.80.0"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=18"
