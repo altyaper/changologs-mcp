@@ -1,0 +1,43 @@
+{
+  "name": "changologs-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Changologs — create, search, and list logs from Claude Code",
+  "type": "module",
+  "bin": {
+    "changologs-mcp": "./bin.js"
+  },
+  "files": [
+    "dist",
+    "bin.js"
+  ],
+  "scripts": {
+    "start": "tsx server.ts",
+    "dev:worker": "wrangler dev worker.ts",
+    "deploy": "wrangler deploy worker.ts",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.12",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "hono": "^4.12.10"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260402.1",
+    "https-proxy-agent": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^4.80.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "changologs",
+    "claude",
+    "model-context-protocol"
+  ],
+  "author": "Jorge Chavez",
+  "license": "MIT"
+}
