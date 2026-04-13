@@ -5,6 +5,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { marked } from "marked";
+
+function toHtml(text: string): string {
+  // If it already looks like HTML, pass it through unchanged
+  if (/^\s*<[a-zA-Z]/.test(text)) return text;
+  return marked(text) as string;
+}
 
 const BASE_URL = (process.env.CHANGOLOGS_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
@@ -154,9 +161,10 @@ function createMcpServer(token: string): Server {
     try {
       if (name === "create_log") {
         const title = (args?.title as string) ?? new Date().toISOString().slice(0, 10);
+        const text = toHtml(args?.text as string);
         const data = await apiRequest(token, "/logs", {
           method: "POST",
-          body: JSON.stringify({ log: { title, text: args?.text as string } }),
+          body: JSON.stringify({ log: { title, text } }),
         });
         const log = data.log;
         return { content: [{ type: "text", text: `Created log "${log.title}" (ID: ${log.hash_id ?? log.id})` }] };
@@ -202,7 +210,8 @@ function createMcpServer(token: string): Server {
         if (!logs.length) return { content: [{ type: "text", text: `No log found with title "${title}".` }], isError: true };
         const matched = logs.find((l) => l.title === title) ?? logs[0];
         if (!matched.board_hash_id) throw new Error("Could not determine board for log");
-        const finalText = append ? (matched.text ?? "") + text : text;
+        const htmlText = toHtml(text);
+        const finalText = append ? (matched.text ?? "") + htmlText : htmlText;
         const updateData = await apiRequest(token, `/boards/${matched.board_hash_id}/logs/${matched.hash_id ?? matched.id}`, {
           method: "PUT",
           body: JSON.stringify({ log: { text: finalText } }),
