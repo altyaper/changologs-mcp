@@ -73,6 +73,17 @@ function createMcpServer(token: string, baseUrl: string): Server {
         },
       },
       {
+        name: "get_log",
+        description: "Get the full content of a log by title.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the log to retrieve." },
+          },
+          required: ["title"],
+        },
+      },
+      {
         name: "delete_log",
         description: "Delete a log by title.",
         inputSchema: {
@@ -128,6 +139,15 @@ function createMcpServer(token: string, baseUrl: string): Server {
         if (!logs.length) return { content: [{ type: "text", text: `No logs found for "${query}".` }] };
         const lines = logs.map((l) => `• ${l.title} (updated ${new Date(l.updated_at).toLocaleDateString()})`);
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (name === "get_log") {
+        const title = args?.title as string;
+        const searchData = await apiRequest(token, baseUrl, `/logs/search?query=${encodeURIComponent(title)}`);
+        const logs: Array<{ title: string; hash_id?: string; id?: string; text?: string }> = searchData.logs ?? [];
+        if (!logs.length) return { content: [{ type: "text", text: `No log found with title "${title}".` }], isError: true };
+        const matched = logs.find((l) => l.title === title) ?? logs[0];
+        return { content: [{ type: "text", text: `# ${matched.title}\n\n${matched.text ?? "(empty)"}` }] };
       }
 
       if (name === "delete_log") {
