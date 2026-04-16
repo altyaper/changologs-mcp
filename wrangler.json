@@ -3,6 +3,9 @@
   "main": "worker.ts",
   "compatibility_date": "2026-04-04",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "CHANGOLOGS_BASE_URL": "https://changologs.com"
+  },
   "observability": {
     "logs": {
       "enabled": true,
