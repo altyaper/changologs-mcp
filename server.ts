@@ -95,15 +95,24 @@ function createMcpServer(token: string): Server {
     tools: [
       {
         name: "create_log",
-        description: "Create a new log entry in changologs on the default board.",
+        description: "Create a new log entry in changologs on the default board of a workspace.",
         inputSchema: {
           type: "object",
           properties: {
             text: { type: "string", description: "Content of the log (plain text or HTML)." },
             title: { type: "string", description: "Title. Defaults to today's date if omitted." },
+            workspace_id: {
+              type: "string",
+              description: "Workspace to create the log in. Defaults to the user's default workspace if omitted. Use list_workspaces to find available workspace ids.",
+            },
           },
           required: ["text"],
         },
+      },
+      {
+        name: "list_workspaces",
+        description: "List the workspaces available to the current user, with the workspace_id to pass to create_log.",
+        inputSchema: { type: "object", properties: {} },
       },
       {
         name: "list_recent_logs",
@@ -165,12 +174,22 @@ function createMcpServer(token: string): Server {
     try {
       if (name === "create_log") {
         const title = (args?.title as string) ?? new Date().toISOString().slice(0, 10);
-        const data = await apiRequest(token, "/logs", {
+        const workspaceId = args?.workspace_id as string | undefined;
+        const path = workspaceId ? `/logs?workspace_id=${encodeURIComponent(workspaceId)}` : "/logs";
+        const data = await apiRequest(token, path, {
           method: "POST",
           body: JSON.stringify({ log: { title, text: args?.text as string } }),
         });
         const log = data.log;
         return { content: [{ type: "text", text: `Created log "${log.title}" (ID: ${log.hash_id ?? log.id})` }] };
+      }
+
+      if (name === "list_workspaces") {
+        const data = await apiRequest(token, "/workspaces");
+        const workspaces: Array<{ name: string; hash_id: string }> = data.workspaces ?? [];
+        if (!workspaces.length) return { content: [{ type: "text", text: "No workspaces found." }] };
+        const lines = workspaces.map((w) => `• ${w.name} (workspace_id: ${w.hash_id})`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
       if (name === "list_recent_logs") {
