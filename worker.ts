@@ -116,6 +116,55 @@ function createMcpServer(token: string, baseUrl: string): Server {
           required: ["title", "text"],
         },
       },
+      {
+        name: "list_task_lists",
+        description: "List the task lists available to the current user, with the task_list_id to pass to create_task.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "create_task",
+        description: "Create a new task in a task list in changologs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the task." },
+            task_list_id: {
+              type: "number",
+              description: "The task list to add it to. Use list_task_lists to find available ids.",
+            },
+            details: { type: "string", description: "Optional details/notes for the task." },
+            date: { type: "string", description: "Optional date (YYYY-MM-DD) for when to do the task." },
+            deadline: { type: "string", description: "Optional hard due date (YYYY-MM-DD), independent of date." },
+          },
+          required: ["title", "task_list_id"],
+        },
+      },
+      {
+        name: "get_task",
+        description: "Get the details of a task by title.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the task to retrieve." },
+          },
+          required: ["title"],
+        },
+      },
+      {
+        name: "update_task",
+        description: "Update an existing task by title: rename it, or change its details, date, or deadline.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the task to update." },
+            new_title: { type: "string", description: "New title, if renaming." },
+            details: { type: "string", description: "New details/notes." },
+            date: { type: "string", description: "New date (YYYY-MM-DD)." },
+            deadline: { type: "string", description: "New deadline (YYYY-MM-DD)." },
+          },
+          required: ["title"],
+        },
+      },
     ],
   }));
 
@@ -199,6 +248,74 @@ function createMcpServer(token: string, baseUrl: string): Server {
         });
         const updated = updateData.log;
         return { content: [{ type: "text", text: `Updated log "${updated.title}" (ID: ${updated.hash_id ?? updated.id})` }] };
+      }
+
+      if (name === "list_task_lists") {
+        const data = await apiRequest(token, baseUrl, "/api/task-lists");
+        const taskLists: Array<{ id: number; name: string }> = data.task_lists ?? [];
+        if (!taskLists.length) return { content: [{ type: "text", text: "No task lists found." }] };
+        const lines = taskLists.map((l) => `• ${l.name} (task_list_id: ${l.id})`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (name === "create_task") {
+        const taskListId = args?.task_list_id as number;
+        const task = await apiRequest(token, baseUrl, `/api/task-lists/${taskListId}/tasks`, {
+          method: "POST",
+          body: JSON.stringify({
+            task: {
+              title: args?.title as string,
+              details: args?.details as string | undefined,
+              date: args?.date as string | undefined,
+              deadline: args?.deadline as string | undefined,
+            },
+          }),
+        });
+        return { content: [{ type: "text", text: `Created task "${task.title}" (ID: ${task.id}) in list ${taskListId}` }] };
+      }
+
+      // get_task/update_task locate the task via the shared /logs/search
+      // endpoint (it returns a `tasks` array alongside logs/boards/secrets)
+      // rather than a dedicated tasks search route -- tasks live nested under
+      // a task list, so there's no flat "all my tasks" endpoint to hit by title.
+      if (name === "get_task") {
+        const title = args?.title as string;
+        const searchData = await apiRequest(token, baseUrl, `/logs/search?query=${encodeURIComponent(title)}`);
+        const tasks: Array<{
+          title: string; id: number; task_list_id: number; details?: string | null;
+          date?: string | null; deadline?: string | null; completed_at?: string | null; repeat_unit?: string | null;
+        }> = searchData.tasks ?? [];
+        if (!tasks.length) return { content: [{ type: "text", text: `No task found with title "${title}".` }], isError: true };
+        const matched = tasks.find((t) => t.title === title) ?? tasks[0];
+        const lines = [
+          `# ${matched.title}`,
+          matched.details ? matched.details : null,
+          `Date: ${matched.date ?? "none"}`,
+          `Deadline: ${matched.deadline ?? "none"}`,
+          `Completed: ${matched.completed_at ? "yes" : "no"}`,
+          matched.repeat_unit ? `Repeats: every ${matched.repeat_unit}` : null,
+        ].filter((line): line is string => line !== null);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (name === "update_task") {
+        const title = args?.title as string;
+        const searchData = await apiRequest(token, baseUrl, `/logs/search?query=${encodeURIComponent(title)}`);
+        const tasks: Array<{ title: string; id: number; task_list_id: number }> = searchData.tasks ?? [];
+        if (!tasks.length) return { content: [{ type: "text", text: `No task found with title "${title}".` }], isError: true };
+        const matched = tasks.find((t) => t.title === title) ?? tasks[0];
+
+        const updates: Record<string, unknown> = {};
+        if (args?.new_title !== undefined) updates.title = args.new_title;
+        if (args?.details !== undefined) updates.details = args.details;
+        if (args?.date !== undefined) updates.date = args.date;
+        if (args?.deadline !== undefined) updates.deadline = args.deadline;
+
+        const updated = await apiRequest(token, baseUrl, `/api/task-lists/${matched.task_list_id}/tasks/${matched.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ task: updates }),
+        });
+        return { content: [{ type: "text", text: `Updated task "${updated.title}" (ID: ${updated.id})` }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);
