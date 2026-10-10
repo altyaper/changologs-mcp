@@ -180,6 +180,18 @@ function createMcpServer(token: string, baseUrl: string): Server {
           required: ["title"],
         },
       },
+      {
+        name: "complete_task",
+        description: "Check off a task by title, or uncheck it. Checking a repeating task moves it to its next occurrence instead of marking it done.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the task to check off." },
+            completed: { type: "boolean", description: "Check (true) or uncheck (false). Defaults to true." },
+          },
+          required: ["title"],
+        },
+      },
     ],
   }));
 
@@ -351,6 +363,26 @@ function createMcpServer(token: string, baseUrl: string): Server {
           body: JSON.stringify({ task: updates }),
         });
         return { content: [{ type: "text", text: `Updated task "${updated.title}" (ID: ${updated.id})` }] };
+      }
+
+      if (name === "complete_task") {
+        const title = args?.title as string;
+        const completed = (args?.completed as boolean) ?? true;
+        const searchData = await apiRequest(token, baseUrl, `/logs/search?query=${encodeURIComponent(title)}`);
+        const tasks: Array<{ title: string; id: number; task_list_id: number }> = searchData.tasks ?? [];
+        if (!tasks.length) return { content: [{ type: "text", text: `No task found with title "${title}".` }], isError: true };
+        const matched = tasks.find((t) => t.title === title) ?? tasks[0];
+
+        const action = completed ? "complete" : "uncomplete";
+        const updated = await apiRequest(token, baseUrl, `/api/task-lists/${matched.task_list_id}/tasks/${matched.id}/${action}`, {
+          method: "POST",
+        });
+        if (!completed) return { content: [{ type: "text", text: `Unchecked task "${updated.title}".` }] };
+        // A repeating task mid-series isn't marked done -- its date rolls forward.
+        if (!updated.completed_at) {
+          return { content: [{ type: "text", text: `Checked off "${updated.title}". Next occurrence: ${updated.date ?? "none"}.` }] };
+        }
+        return { content: [{ type: "text", text: `Checked off "${updated.title}".` }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);
