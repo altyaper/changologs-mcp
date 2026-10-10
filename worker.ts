@@ -122,6 +122,21 @@ function createMcpServer(token: string, baseUrl: string): Server {
         inputSchema: { type: "object", properties: {} },
       },
       {
+        name: "list_tasks",
+        description: "List the tasks in a task list, in their display order. Completed tasks are omitted unless include_completed is true.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_list_id: {
+              type: "number",
+              description: "The task list to read. Use list_task_lists to find available ids.",
+            },
+            include_completed: { type: "boolean", description: "Also list completed tasks. Defaults to false." },
+          },
+          required: ["task_list_id"],
+        },
+      },
+      {
         name: "create_task",
         description: "Create a new task in a task list in changologs.",
         inputSchema: {
@@ -255,6 +270,26 @@ function createMcpServer(token: string, baseUrl: string): Server {
         const taskLists: Array<{ id: number; name: string }> = data.task_lists ?? [];
         if (!taskLists.length) return { content: [{ type: "text", text: "No task lists found." }] };
         const lines = taskLists.map((l) => `• ${l.name} (task_list_id: ${l.id})`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (name === "list_tasks") {
+        const taskListId = args?.task_list_id as number;
+        const includeCompleted = (args?.include_completed as boolean) ?? false;
+        const data = await apiRequest(token, baseUrl, `/api/task-lists/${taskListId}/tasks`);
+        const allTasks: Array<{
+          title: string; id: number; date?: string | null; deadline?: string | null; completed_at?: string | null;
+        }> = data.tasks ?? [];
+        const tasks = includeCompleted ? allTasks : allTasks.filter((t) => !t.completed_at);
+        if (!tasks.length) return { content: [{ type: "text", text: `No tasks found in list ${taskListId}.` }] };
+        const lines = tasks.map((t) => {
+          const extras = [
+            t.date ? `date ${t.date}` : null,
+            t.deadline ? `deadline ${t.deadline}` : null,
+            t.completed_at ? "completed" : null,
+          ].filter(Boolean);
+          return `• ${t.title} (ID: ${t.id}${extras.length ? `, ${extras.join(", ")}` : ""})`;
+        });
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
