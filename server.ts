@@ -166,6 +166,18 @@ function createMcpServer(token: string): Server {
         },
       },
       {
+        name: "set_log_icon",
+        description: "Set the icon of a log by title. The icon is an emoji shown next to the log's title. Pass an empty string to remove it.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Title of the log." },
+            emoji: { type: "string", description: "A single emoji, e.g. \"🚀\". Empty string removes the icon." },
+          },
+          required: ["title", "emoji"],
+        },
+      },
+      {
         name: "list_task_lists",
         description: "List the task lists available to the current user, with the task_list_id to pass to create_task.",
         inputSchema: { type: "object", properties: {} },
@@ -324,6 +336,23 @@ function createMcpServer(token: string): Server {
         });
         const updated = updateData.log;
         return { content: [{ type: "text", text: `Updated log "${updated.title}" (ID: ${updated.hash_id ?? updated.id})` }] };
+      }
+
+      if (name === "set_log_icon") {
+        const title = args?.title as string;
+        const emoji = (args?.emoji as string).trim();
+        const searchData = await apiRequest(token, `/logs/search?query=${encodeURIComponent(title)}`);
+        const logs: Array<{ title: string; hash_id?: string; id?: string; board_hash_id?: string }> = searchData.logs ?? [];
+        if (!logs.length) return { content: [{ type: "text", text: `No log found with title "${title}".` }], isError: true };
+        const matched = logs.find((l) => l.title === title) ?? logs[0];
+        if (!matched.board_hash_id) throw new Error("Could not determine board for log");
+        const updateData = await apiRequest(token, `/boards/${matched.board_hash_id}/logs/${matched.hash_id ?? matched.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ log: { emoji: emoji || null } }),
+        });
+        const updated = updateData.log;
+        if (!emoji) return { content: [{ type: "text", text: `Removed the icon from "${updated.title}".` }] };
+        return { content: [{ type: "text", text: `Set the icon of "${updated.title}" to ${emoji}.` }] };
       }
 
       if (name === "list_task_lists") {
