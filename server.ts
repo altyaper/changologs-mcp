@@ -180,7 +180,30 @@ function createMcpServer(token: string): Server {
       {
         name: "list_task_lists",
         description: "List the task lists available to the current user, with the task_list_id to pass to create_task.",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: {
+          type: "object",
+          properties: {
+            workspace_id: {
+              type: "string",
+              description: "Workspace whose lists to show. Defaults to the user's default workspace if omitted. Use list_workspaces to find available workspace ids.",
+            },
+          },
+        },
+      },
+      {
+        name: "create_task_list",
+        description: "Create a new task list in changologs. Returns the task_list_id to pass to create_task.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Name of the list." },
+            workspace_id: {
+              type: "string",
+              description: "Workspace to create the list in. Defaults to the user's default workspace if omitted. Use list_workspaces to find available workspace ids.",
+            },
+          },
+          required: ["name"],
+        },
       },
       {
         name: "list_tasks",
@@ -356,11 +379,23 @@ function createMcpServer(token: string): Server {
       }
 
       if (name === "list_task_lists") {
-        const data = await apiRequest(token, "/api/task-lists");
+        const workspaceId = args?.workspace_id as string | undefined;
+        const path = workspaceId ? `/api/task-lists?workspace_id=${encodeURIComponent(workspaceId)}` : "/api/task-lists";
+        const data = await apiRequest(token, path);
         const taskLists: Array<{ id: number; name: string }> = data.task_lists ?? [];
         if (!taskLists.length) return { content: [{ type: "text", text: "No task lists found." }] };
         const lines = taskLists.map((l) => `• ${l.name} (task_list_id: ${l.id})`);
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (name === "create_task_list") {
+        const workspaceId = args?.workspace_id as string | undefined;
+        const path = workspaceId ? `/api/task-lists?workspace_id=${encodeURIComponent(workspaceId)}` : "/api/task-lists";
+        const taskList = await apiRequest(token, path, {
+          method: "POST",
+          body: JSON.stringify({ task_list: { name: args?.name as string } }),
+        });
+        return { content: [{ type: "text", text: `Created task list "${taskList.name}" (task_list_id: ${taskList.id})` }] };
       }
 
       if (name === "list_tasks") {

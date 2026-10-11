@@ -54,6 +54,7 @@ The server doesn't store anything. Each request goes straight to the Changologs 
 | Tool | What it does |
 | --- | --- |
 | `list_task_lists` | List your task lists and their ids, for `create_task`. |
+| `create_task_list` | Create a task list, optionally in a given workspace. |
 | `list_tasks` | List the tasks in a list, in display order. Completed tasks are optional. |
 | `create_task` | Create a task, with optional details, date and deadline. |
 | `get_task` | Get a task's details, by title. |
