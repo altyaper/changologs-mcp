@@ -8,25 +8,9 @@
   },
   "version": "1.0.0",
   "remotes": [
-    { "type": "streamable-http", "url": "https://changologs-mcp.workers.dev/mcp" }
-  ],
-  "packages": [
     {
-      "registryType": "npm",
-      "identifier": "changologs-mcp",
-      "version": "1.0.0",
-      "transport": {
-        "type": "stdio"
-      },
-      "environmentVariables": [
-        {
-          "description": "Your API key for the service",
-          "isRequired": true,
-          "format": "string",
-          "isSecret": true,
-          "name": "YOUR_API_KEY"
-        }
-      ]
+      "type": "streamable-http",
+      "url": "https://mcp.changologs.com/mcp"
     }
   ]
 }
