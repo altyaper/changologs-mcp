@@ -4,6 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { BLOCK_TOOLS, renderBlockTool } from "./blocks.js";
 
 interface Env {
   CHANGOLOGS_BASE_URL: string;
@@ -46,7 +47,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
     tools: [
       {
         name: "create_log",
-        description: "Create a new log entry in changologs on the default board of a workspace.",
+        description: "Create a new log entry in changologs on the default board of a workspace. For anything beyond a single plain paragraph, call the relevant add_* block tools first (add_heading, add_table, add_callout, etc.), concatenate their returned HTML fragments in document order, and pass the assembled string as text.",
         inputSchema: {
           type: "object",
           properties: {
@@ -60,6 +61,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
           required: ["text"],
         },
       },
+      ...BLOCK_TOOLS,
       {
         name: "list_workspaces",
         description: "List the workspaces available to the current user, with the workspace_id to pass to create_log.",
@@ -105,7 +107,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
       },
       {
         name: "update_log",
-        description: "Update an existing log by title. Append or replace content.",
+        description: "Update an existing log by title. Append or replace content. For anything beyond a single plain paragraph, call the relevant add_* block tools first, concatenate their returned HTML fragments in document order, and pass the assembled string as text.",
         inputSchema: {
           type: "object",
           properties: {
@@ -234,6 +236,11 @@ function createMcpServer(token: string, baseUrl: string): Server {
     const { name, arguments: args } = request.params;
 
     try {
+      const blockFragment = renderBlockTool(name, args as Record<string, unknown> | undefined);
+      if (blockFragment !== null) {
+        return { content: [{ type: "text", text: blockFragment }] };
+      }
+
       if (name === "create_log") {
         const title = (args?.title as string) ?? new Date().toISOString().slice(0, 10);
         const workspaceId = args?.workspace_id as string | undefined;

@@ -49,6 +49,26 @@ The server doesn't store anything. Each request goes straight to the Changologs 
 | `set_log_icon` | Set or remove the emoji shown next to a log's title. |
 | `delete_log` | Delete a log, by title. |
 
+### Rich content blocks
+
+These render an HTML fragment matching the changologs editor's formatting exactly —
+they don't call the API. Concatenate the fragments in order and pass the result as
+`text` to `create_log`/`update_log` to produce a richly formatted log.
+
+| Tool | What it does |
+| --- | --- |
+| `add_paragraph` | A paragraph. Supports `**bold**`, `_italic_`, `` `code` ``, `[text](url)`. |
+| `add_heading` | A heading, level 1-3. |
+| `add_bullet_list` / `add_numbered_list` | A bullet or numbered list. |
+| `add_task_list` | A checkbox list (inline content, not a `create_task_list` task list). |
+| `add_blockquote` | A blockquote. |
+| `add_code_block` | A fenced code block, optionally with a language label. |
+| `add_divider` | A horizontal rule. |
+| `add_toggle` | A collapsible section with a summary and hidden content. |
+| `add_callout` | A highlighted callout box with an icon. |
+| `add_table` | A table. No header-row styling exists in this editor, so `header_row: true` bolds the first row's text instead. |
+| `add_image` | An image, from an already-hosted URL (no file upload). |
+
 ### Tasks
 
 | Tool | What it does |
@@ -64,6 +84,7 @@ The server doesn't store anything. Each request goes straight to the Changologs 
 ## Example prompts
 
 - "Log what we did in this session to Changologs."
+- "Write a new log with all this data in a table, add callouts where it makes sense, and use h1/h2/h3 headings and paragraphs."
 - "Search my logs for the Postgres migration notes."
 - "Add a task to finish the release notes by Friday."
 - "What's left on my Work task list?"
@@ -83,6 +104,9 @@ CHANGOLOGS_BASE_URL=http://localhost:3000 npm start
 
 # Type-check
 npm run build
+
+# Run tests
+npm test
 ```
 
 The Worker reads `CHANGOLOGS_BASE_URL` from `wrangler.json` (set to `https://changologs.com`). `npm run deploy` deploys it with Wrangler.

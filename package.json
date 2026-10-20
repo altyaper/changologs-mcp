@@ -16,6 +16,7 @@
     "deploy": "npx wrangler deploy worker.ts",
     "build": "tsc --noEmit",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -25,7 +26,8 @@
     "@cloudflare/workers-types": "^4.20260402.1",
     "@types/node": "^25.5.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=18"
