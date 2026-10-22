@@ -81,6 +81,26 @@ they don't call the API. Concatenate the fragments in order and pass the result 
 | `update_task` | Rename a task, or change its details, date or deadline. |
 | `complete_task` | Check off a task, or uncheck it. Checking a repeating task moves it to its next occurrence. |
 
+### Databases
+
+A database is a log whose sub-logs are rows in a table: each row's title is its Name,
+and the other columns are typed (text, number, date, select, multi-select, checkbox,
+url, email, phone, person). Databases are looked up by title within a workspace;
+rows by title or by the `row_id` that `query_database_rows` shows.
+
+| Tool | What it does |
+| --- | --- |
+| `list_databases` | List the databases in a workspace. |
+| `get_database` | Show a database's columns (with select choices) and views (with filters and sorts). |
+| `query_database_rows` | List rows as a table, filtered and sorted by a view, 100 per page. |
+| `create_database` | Create a database, optionally with its columns. |
+| `convert_log_to_database` | Turn a log into a database. Its sub-logs become rows, with columns built from their properties. |
+| `add_database_column` / `update_database_column` / `delete_database_column` | Add, rename, retype, re-choice or delete a column. |
+| `add_database_row` | Add a row with a title and cell values keyed by column name. |
+| `update_database_row` | Change a row's title or some of its cells. |
+| `delete_database_row` | Move a row to the trash. |
+| `update_database_view` | Replace a view's filters and sorts. This changes the saved view in changologs for everyone. |
+
 ## Example prompts
 
 - "Log what we did in this session to Changologs."
@@ -88,6 +108,8 @@ they don't call the API. Concatenate the fragments in order and pass the result 
 - "Search my logs for the Postgres migration notes."
 - "Add a task to finish the release notes by Friday."
 - "What's left on my Work task list?"
+- "Add a row to my Reading list database for Dune, status Reading."
+- "Show me every row in the Bugs database that isn't Done."
 
 ## Development
 

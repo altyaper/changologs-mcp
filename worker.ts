@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { BLOCK_TOOLS, renderBlockTool } from "./blocks.js";
+import { DATABASE_TOOLS, callDatabaseTool } from "./databases.js";
 
 interface Env {
   CHANGOLOGS_BASE_URL: string;
@@ -130,6 +131,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
           required: ["title", "emoji"],
         },
       },
+      ...DATABASE_TOOLS,
       {
         name: "list_task_lists",
         description: "List the task lists available to the current user, with the task_list_id to pass to create_task.",
@@ -239,6 +241,12 @@ function createMcpServer(token: string, baseUrl: string): Server {
       const blockFragment = renderBlockTool(name, args as Record<string, unknown> | undefined);
       if (blockFragment !== null) {
         return { content: [{ type: "text", text: blockFragment }] };
+      }
+
+      const databaseResult = await callDatabaseTool(name, args as Record<string, unknown> | undefined,
+        (path, options) => apiRequest(token, baseUrl, path, options));
+      if (databaseResult !== null) {
+        return { content: [{ type: "text", text: databaseResult }] };
       }
 
       if (name === "create_log") {
