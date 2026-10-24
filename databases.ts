@@ -462,7 +462,7 @@ export async function callDatabaseTool(
   if (name === "create_database") {
     const data = await api(`/logs${workspaceQuery(workspaceId)}`, {
       method: "POST",
-      body: JSON.stringify({ log: { title: a.title as string, text: "", is_database: true } }),
+      body: JSON.stringify({ log: { title: a.title as string, text: "", is_database: true }, daily_note: false }),
     });
     const db = data.log as DatabaseLog;
     const columns = (a.columns as Array<{ name: string; kind: string; choices?: string[] }> | undefined) ?? [];

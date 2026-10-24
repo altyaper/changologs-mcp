@@ -181,7 +181,8 @@ describe("callDatabaseTool", () => {
       { title: "Tasks", columns: [{ name: "Status", kind: "list", choices: ["Todo"] }] },
       api,
     );
-    expect(calls[0].body).toEqual({ log: { title: "Tasks", text: "", is_database: true } });
+    // Without daily_note: false the API appends to the daily note instead.
+    expect(calls[0].body).toEqual({ log: { title: "Tasks", text: "", is_database: true }, daily_note: false });
     expect(calls[1].body).toMatchObject({ name: "Status", kind: "list", options: { choices: [{ name: "Todo", color: "gray" }] } });
     expect(text).toContain('Created database "Tasks" (database_id: dbhash)');
   });
