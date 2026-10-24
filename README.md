@@ -40,7 +40,7 @@ The server doesn't store anything. Each request goes straight to the Changologs 
 
 | Tool | What it does |
 | --- | --- |
-| `create_log` | Create a log on a workspace's default board. The title defaults to today's date. |
+| `create_log` | Create a new log (`new_log: true`, or whenever a `title` is given), or append to today's daily note (the default for untitled quick notes). |
 | `list_workspaces` | List your workspaces and their ids, for `create_log`. |
 | `list_recent_logs` | List the most recently updated logs. |
 | `search_logs` | Search logs by title or content. |

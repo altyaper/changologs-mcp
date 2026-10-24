@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BLOCK_TOOLS, renderBlockTool } from "./blocks.js";
 import { DATABASE_TOOLS, callDatabaseTool } from "./databases.js";
+import { CREATE_LOG_TOOL, createLog } from "./logs.js";
 
 interface Env {
   CHANGOLOGS_BASE_URL: string;
@@ -46,22 +47,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      {
-        name: "create_log",
-        description: "Create a new log entry in changologs on the default board of a workspace. For anything beyond a single plain paragraph, call the relevant add_* block tools first (add_heading, add_table, add_callout, etc.), concatenate their returned HTML fragments in document order, and pass the assembled string as text.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            text: { type: "string", description: "Content of the log (plain text or HTML)." },
-            title: { type: "string", description: "Title. Defaults to today's date if omitted." },
-            workspace_id: {
-              type: "string",
-              description: "Workspace to create the log in. Defaults to the user's default workspace if omitted. Use list_workspaces to find available workspace ids.",
-            },
-          },
-          required: ["text"],
-        },
-      },
+      CREATE_LOG_TOOL,
       ...BLOCK_TOOLS,
       {
         name: "list_workspaces",
@@ -250,15 +236,9 @@ function createMcpServer(token: string, baseUrl: string): Server {
       }
 
       if (name === "create_log") {
-        const title = (args?.title as string) ?? new Date().toISOString().slice(0, 10);
-        const workspaceId = args?.workspace_id as string | undefined;
-        const path = workspaceId ? `/logs?workspace_id=${encodeURIComponent(workspaceId)}` : "/logs";
-        const data = await apiRequest(token, baseUrl, path, {
-          method: "POST",
-          body: JSON.stringify({ log: { title, text: args?.text as string } }),
-        });
-        const log = data.log;
-        return { content: [{ type: "text", text: `Created log "${log.title}" (ID: ${log.hash_id ?? log.id})` }] };
+        const text = await createLog(args as Record<string, unknown> | undefined,
+          (path, options) => apiRequest(token, baseUrl, path, options));
+        return { content: [{ type: "text", text }] };
       }
 
       if (name === "list_workspaces") {
