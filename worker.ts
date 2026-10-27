@@ -107,7 +107,7 @@ function createMcpServer(token: string, baseUrl: string): Server {
       },
       {
         name: "set_log_icon",
-        description: "Set the icon of a log by title. The icon is an emoji shown next to the log's title. Pass an empty string to remove it.",
+        description: "Set the icon of a log by title. The icon is an emoji shown next to the log's title, so it never belongs in the title itself. Pass an empty string to remove it. For a row of a database, use update_database_row's icon instead -- it finds the row within its database.",
         inputSchema: {
           type: "object",
           properties: {

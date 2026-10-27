@@ -26,7 +26,7 @@ export interface View {
 export interface Property { id: number; name: string; kind: string; value: unknown; column_id: number | null }
 export interface Row {
   id: number; hash_id: string; title: string; title_text?: string; parent_id?: number | null;
-  properties: Property[];
+  emoji?: string | null; properties: Property[];
 }
 interface DatabaseLog { id: number; hash_id: string; title: string; title_text?: string; board_hash_id: string }
 
@@ -57,6 +57,12 @@ const valuesParam = {
   type: "object",
   description: `Cell values keyed by column name, e.g. {"Status": "Done", "Due": "2026-11-01"}. ${VALUE_FORMATS}`,
   additionalProperties: true,
+};
+const iconParam = {
+  type: "string",
+  description:
+    "Emoji shown as the row's icon, e.g. \"🍗\". An emoji always goes here, never at the start of title -- changologs " +
+    "renders the icon next to the title itself, so an emoji in both shows up twice. Empty string removes the icon.",
 };
 
 export const DATABASE_TOOLS = [
@@ -178,12 +184,13 @@ export const DATABASE_TOOLS = [
   },
   {
     name: "add_database_row",
-    description: "Add a row to a database, with its title (the Name column) and optional cell values.",
+    description: "Add a row to a database, with its title (the Name column), an optional emoji icon and optional cell values.",
     inputSchema: {
       type: "object",
       properties: {
         database: databaseParam,
-        title: { type: "string", description: "The row's title, i.e. its Name." },
+        title: { type: "string", description: "The row's title, i.e. its Name. Plain text -- any emoji goes in icon." },
+        icon: iconParam,
         values: valuesParam,
         workspace_id: workspaceParam,
       },
@@ -192,13 +199,17 @@ export const DATABASE_TOOLS = [
   },
   {
     name: "update_database_row",
-    description: "Change a database row's title and/or cell values. Cells not mentioned are left as they are.",
+    description:
+      "Change a database row's title, icon and/or cell values. Cells not mentioned are left as they are. " +
+      "This is how a row gets an emoji -- set icon rather than writing the emoji into the title; setting icon also " +
+      "takes a leftover emoji off the front of the title.",
     inputSchema: {
       type: "object",
       properties: {
         database: databaseParam,
         row: { type: "string", description: "The row's title or row_id (from query_database_rows)." },
-        title: { type: "string", description: "New title, if renaming." },
+        title: { type: "string", description: "New title, if renaming. Plain text -- any emoji goes in icon." },
+        icon: iconParam,
         values: valuesParam,
         workspace_id: workspaceParam,
       },
@@ -272,6 +283,39 @@ function titleOf(log: { title: string; title_text?: string }): string {
 
 function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+// One emoji at the start of a title: a pictograph with its skin tone and ZWJ
+// sequence, a flag, or a keycap. A pictograph counts only when it is drawn as
+// an emoji -- either by default or through a variation selector -- so a title
+// opening with a text symbol such as a trademark or copyright sign keeps it.
+const PICTOGRAPH = String.raw`(?:\p{Extended_Pictographic}\uFE0F|\p{Emoji_Presentation})\p{Emoji_Modifier}?`;
+const LEADING_EMOJI = new RegExp(
+  // A flag is a pair of regional indicators, and each of those is a
+  // pictograph on its own, so it has to be tried before PICTOGRAPH.
+  String.raw`^(\p{Regional_Indicator}{2}|[0-9#*]\uFE0F?\u20E3|${PICTOGRAPH}(?:\u200D${PICTOGRAPH})*)\s*`,
+  "u",
+);
+
+// A row's emoji belongs in the log's icon, not in its title. Asked for "a
+// chicken on that row" a model tends to write "🍗 Chicken" instead, and since
+// changologs renders the icon beside the title the row then reads "🍗 🍗
+// Chicken". So the leading emoji is always taken off the title, and becomes
+// the icon when the call didn't give one.
+export function splitIcon(title: string, icon?: string): { title: string; icon?: string } {
+  let rest = title.trim();
+  let found: string | undefined;
+  for (;;) {
+    const match = rest.match(LEADING_EMOJI);
+    if (!match) break;
+    const stripped = rest.slice(match[0].length).trim();
+    // A title that is nothing but emoji stays as it is -- stripping it would
+    // leave the row nameless.
+    if (!stripped) break;
+    found ??= match[1];
+    rest = stripped;
+  }
+  return { title: rest, icon: icon ?? found };
 }
 
 // Looks the database up among the workspace's databases (not the global
@@ -375,13 +419,17 @@ function describeColumns(columns: Column[]): string[] {
 }
 
 export function renderRowsTable(columns: Column[], rows: Row[]): string {
-  const header = ["row_id", "Name", ...columns.map((c) => c.name)];
+  // Icon is its own column rather than a prefix on Name, so a title read back
+  // out of here never carries the emoji into a rename. It only shows up once
+  // a row has an icon, to keep the table narrow.
+  const icons = rows.some((row) => row.emoji);
+  const header = ["row_id", ...(icons ? ["Icon"] : []), "Name", ...columns.map((c) => c.name)];
   const lines = [
     `| ${header.map(tableCell).join(" | ")} |`,
     `| ${header.map(() => "---").join(" | ")} |`,
     ...rows.map((row) => {
       const cells = columns.map((c) => formatValue(row.properties.find((p) => p.column_id === c.id)?.value, c.kind));
-      return `| ${[row.hash_id, titleOf(row), ...cells].map(tableCell).join(" | ")} |`;
+      return `| ${[row.hash_id, ...(icons ? [row.emoji ?? ""] : []), titleOf(row), ...cells].map(tableCell).join(" | ")} |`;
     }),
   ];
   return lines.join("\n");
@@ -547,13 +595,14 @@ export async function callDatabaseTool(
     const values = (a.values as Record<string, unknown> | undefined) ?? {};
     // Checked before the row exists, so a bad column name leaves nothing behind.
     Object.keys(values).forEach((key) => findColumn(columns, key));
-    const data = await api(`/logs${workspaceQuery(workspaceId)}`, {
-      method: "POST",
-      body: JSON.stringify({ log: { title: a.title as string, text: "", parent_id: db.id } }),
-    });
+    const { title, icon } = splitIcon(a.title as string, a.icon as string | undefined);
+    const log: Record<string, unknown> = { title, text: "", parent_id: db.id };
+    if (icon) log.emoji = icon;
+    const data = await api(`/logs${workspaceQuery(workspaceId)}`, { method: "POST", body: JSON.stringify({ log }) });
     const row: Row = { ...data.log, properties: [] };
     const written = await writeValues(api, row, columns, values);
-    return `Added row "${titleOf(row)}" (row_id: ${row.hash_id}) to "${titleOf(db)}"${written.length ? ` — ${written.join("; ")}` : ""}.`;
+    const named = `"${titleOf(row)}"${icon ? ` with the icon ${icon}` : ""}`;
+    return `Added row ${named} (row_id: ${row.hash_id}) to "${titleOf(db)}"${written.length ? ` — ${written.join("; ")}` : ""}.`;
   }
 
   if (name === "update_database_row") {
@@ -561,12 +610,20 @@ export async function callDatabaseTool(
     const values = (a.values as Record<string, unknown> | undefined) ?? {};
     Object.keys(values).forEach((key) => findColumn(columns, key));
     const changes: string[] = [];
-    if (a.title !== undefined) {
-      await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, {
-        method: "PUT",
-        body: JSON.stringify({ log: { title: a.title as string } }),
-      });
-      changes.push(`title: ${a.title}`);
+    // Title and icon are one write. Setting the icon also cleans an emoji off
+    // the front of the title, which is how a row an earlier call wrote as
+    // "🍗 Chicken" stops showing the emoji twice.
+    if (a.title !== undefined || a.icon !== undefined) {
+      const split = splitIcon((a.title as string | undefined) ?? titleOf(row), a.icon as string | undefined);
+      const log: Record<string, unknown> = {};
+      if (a.title !== undefined || split.title !== titleOf(row)) log.title = split.title;
+      if (a.icon !== undefined) log.emoji = (a.icon as string) || null;
+      else if (split.icon) log.emoji = split.icon;
+      if (Object.keys(log).length) {
+        await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, { method: "PUT", body: JSON.stringify({ log }) });
+        if (log.title !== undefined) changes.push(`title: ${log.title}`);
+        if (log.emoji !== undefined) changes.push(log.emoji ? `icon: ${log.emoji}` : "icon: removed");
+      }
     }
     changes.push(...await writeValues(api, row, columns, values));
     if (!changes.length) return `Nothing to change on "${titleOf(row)}".`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChoices, callDatabaseTool, formatValue, renderRowsTable, type Column, type Row } from "./databases.js";
+import { buildChoices, callDatabaseTool, formatValue, renderRowsTable, splitIcon, type Column, type Row } from "./databases.js";
 
 const DB = { id: 7, hash_id: "dbhash", title: "Tasks", title_text: "Tasks", board_hash_id: "board1" };
 const COLUMNS: Column[] = [
@@ -123,6 +123,60 @@ describe("callDatabaseTool", () => {
     ]);
   });
 
+  it("adds a row's emoji as its icon, not as part of its title", async () => {
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "POST /logs": (body) => ({ log: { id: 21, hash_id: "row2", title: body.log.title, title_text: body.log.title } }),
+    });
+    const text = await callDatabaseTool("add_database_row", { database: "Tasks", title: "Chicken", icon: "🍗" }, api);
+    const create = calls.find((c) => c.method === "POST")!;
+    expect(create.body).toEqual({ log: { title: "Chicken", text: "", parent_id: 7, emoji: "🍗" } });
+    expect(text).toBe('Added row "Chicken" with the icon 🍗 (row_id: row2) to "Tasks".');
+  });
+
+  it("moves an emoji written into a new row's title over to its icon", async () => {
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "POST /logs": (body) => ({ log: { id: 21, hash_id: "row2", title: body.log.title, title_text: body.log.title } }),
+    });
+    await callDatabaseTool("add_database_row", { database: "Tasks", title: "🍗 🍗 Chicken" }, api);
+    expect(calls.find((c) => c.method === "POST")!.body).toEqual(
+      { log: { title: "Chicken", text: "", parent_id: 7, emoji: "🍗" } },
+    );
+  });
+
+  it("sets a row's icon and takes the emoji back off its title", async () => {
+    const titled: Row = { ...ROW, title: "🍗 Chicken", title_text: "🍗 Chicken" };
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "GET /l/dbhash/rows": () => ({ columns: COLUMNS, views: VIEWS, rows: [titled], next_cursor: null }),
+      "PUT /boards/board1/logs/row1": () => ({ log: {} }),
+    });
+    const text = await callDatabaseTool("update_database_row", { database: "Tasks", row: "row1", icon: "🍗" }, api);
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([
+      { path: "/boards/board1/logs/row1", method: "PUT", body: { log: { title: "Chicken", emoji: "🍗" } } },
+    ]);
+    expect(text).toContain("title: Chicken; icon: 🍗");
+  });
+
+  it("removes a row's icon on an empty icon", async () => {
+    const { api, calls } = fakeApi({ ...baseRoutes, "PUT /boards/board1/logs/row1": () => ({ log: {} }) });
+    const text = await callDatabaseTool("update_database_row", { database: "Tasks", row: "row1", icon: "" }, api);
+    expect(calls.at(-1)!.body).toEqual({ log: { emoji: null } });
+    expect(text).toContain("icon: removed");
+  });
+
+  it("leaves the title alone when only cells change", async () => {
+    const titled: Row = { ...ROW, title: "🍗 Chicken", title_text: "🍗 Chicken" };
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "GET /l/dbhash/rows": () => ({ columns: COLUMNS, views: VIEWS, rows: [titled], next_cursor: null }),
+      "PATCH /l/row1/properties/100": () => ({ properties: [] }),
+    });
+    await callDatabaseTool("update_database_row", { database: "Tasks", row: "row1", values: { Status: "Todo" } }, api);
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
   it("finds a row hidden by the view through the search", async () => {
     const { api, calls } = fakeApi({
       ...baseRoutes,
@@ -201,7 +255,36 @@ describe("formatting", () => {
     expect(renderRowsTable([], [row]).split("\n")[2]).toBe("| row1 | a\\|b c |");
   });
 
+  it("shows an Icon column only once a row has one", () => {
+    const plain: Row = { ...ROW, properties: [] };
+    expect(renderRowsTable([], [plain]).split("\n")[0]).toBe("| row_id | Name |");
+    const withIcon: Row = { ...plain, emoji: "🍗" };
+    const lines = renderRowsTable([], [withIcon, plain]).split("\n");
+    expect(lines[0]).toBe("| row_id | Icon | Name |");
+    expect(lines[2]).toBe("| row1 | 🍗 | Write docs |");
+    expect(lines[3]).toBe("| row1 |  | Write docs |");
+  });
+
   it("gives new choices the next colors", () => {
     expect(buildChoices(["x", "y"]).map((c) => c.color)).toEqual(["gray", "brown"]);
+  });
+});
+
+describe("splitIcon", () => {
+  it("takes a leading emoji off the title", () => {
+    expect(splitIcon("🍗 Chicken")).toEqual({ title: "Chicken", icon: "🍗" });
+    expect(splitIcon("❤️ Loved")).toEqual({ title: "Loved", icon: "❤️" });
+    expect(splitIcon("👨‍👩‍👧 Family")).toEqual({ title: "Family", icon: "👨‍👩‍👧" });
+    expect(splitIcon("🇪🇸 Spain")).toEqual({ title: "Spain", icon: "🇪🇸" });
+  });
+
+  it("keeps an explicitly given icon and still cleans the title", () => {
+    expect(splitIcon("🐔 Chicken", "🍗")).toEqual({ title: "Chicken", icon: "🍗" });
+  });
+
+  it("leaves titles that are only an emoji, or start with a text symbol", () => {
+    expect(splitIcon("🍗")).toEqual({ title: "🍗", icon: undefined });
+    expect(splitIcon("™ Brand")).toEqual({ title: "™ Brand", icon: undefined });
+    expect(splitIcon("Chicken 🍗")).toEqual({ title: "Chicken 🍗", icon: undefined });
   });
 });

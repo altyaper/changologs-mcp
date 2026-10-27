@@ -26,8 +26,8 @@ No Rails changes. Every tool uses an endpoint the web client already calls:
 | `create_database` | `POST /logs` `{is_database: true}`, then `POST /l/:id/columns` per column |
 | `convert_log_to_database` | `GET /logs/search`, `POST /l/:id/database` |
 | `add/update/delete_database_column` | `POST`/`PATCH`/`DELETE /l/:id/columns[/:column_id]` |
-| `add_database_row` | `POST /logs` `{parent_id}`, then `POST /l/:row/properties` per value |
-| `update_database_row` | `PUT /boards/:board/logs/:row` (title), `PATCH`/`POST /l/:row/properties` |
+| `add_database_row` | `POST /logs` `{parent_id, emoji}`, then `POST /l/:row/properties` per value |
+| `update_database_row` | `PUT /boards/:board/logs/:row` (title, emoji), `PATCH`/`POST /l/:row/properties` |
 | `delete_database_row` | `DELETE /l/:row` (trash) |
 | `update_database_view` | `PATCH /l/:id/views/:view_id` |
 
@@ -52,6 +52,14 @@ No Rails changes. Every tool uses an endpoint the web client already calls:
 - **Select choices are generated client-side** (`{id, name, color}`, colors cycling as
   `LogColumn#add_choices!` does), because the columns endpoint stores `options` as sent.
   Replacing a column's choices keeps the id and color of names already present.
+- **A row's emoji is its icon, and never its title.** Asked for an icon on a row, a
+  model that has no `icon` parameter writes "🍗 Chicken" as the title instead, and the
+  row then reads "🍗 🍗 Chicken" once the icon is set too. So `add_database_row` and
+  `update_database_row` take `icon` (the log's `emoji`), and `splitIcon` takes a leading
+  emoji off the title either way -- setting `icon` on an existing row is also how a row
+  already written that way gets cleaned up. A title that is nothing but an emoji is left
+  alone, as stripping it would leave the row nameless, and `query_database_rows` shows the
+  icon in its own column rather than in Name, so a title read back out carries no emoji.
 - **Left out:** turning a database back into a page (`DELETE /l/:id/database`),
   reordering columns, renaming views. Easy to add if wanted.
 

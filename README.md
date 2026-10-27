@@ -88,6 +88,10 @@ and the other columns are typed (text, number, date, select, multi-select, check
 url, email, phone, person). Databases are looked up by title within a workspace;
 rows by title or by the `row_id` that `query_database_rows` shows.
 
+A row's emoji is the row log's icon, which changologs draws next to the title; it is
+set with the `icon` parameter, never by writing the emoji into the title. An emoji at
+the start of a title is moved to the icon, so a row does not end up showing it twice.
+
 | Tool | What it does |
 | --- | --- |
 | `list_databases` | List the databases in a workspace. |
@@ -96,8 +100,8 @@ rows by title or by the `row_id` that `query_database_rows` shows.
 | `create_database` | Create a database, optionally with its columns. |
 | `convert_log_to_database` | Turn a log into a database. Its sub-logs become rows, with columns built from their properties. |
 | `add_database_column` / `update_database_column` / `delete_database_column` | Add, rename, retype, re-choice or delete a column. |
-| `add_database_row` | Add a row with a title and cell values keyed by column name. |
-| `update_database_row` | Change a row's title or some of its cells. |
+| `add_database_row` | Add a row with a title, an optional emoji icon and cell values keyed by column name. |
+| `update_database_row` | Change a row's title, its icon or some of its cells. |
 | `delete_database_row` | Move a row to the trash. |
 | `update_database_view` | Replace a view's filters and sorts. This changes the saved view in changologs for everyone. |
 
