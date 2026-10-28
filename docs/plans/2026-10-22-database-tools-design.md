@@ -63,9 +63,43 @@ No Rails changes. Every tool uses an endpoint the web client already calls:
 - **Left out:** turning a database back into a page (`DELETE /l/:id/database`),
   reordering columns, renaming views. Easy to add if wanted.
 
+## Files & media columns, and covers
+
+Added after the `files` property kind shipped in changologs — see
+`docs/plans/2026-10-26-files-media-property-design.md` there.
+
+- **A file arrives as a URL, never as bytes.** This server runs as a worker, nowhere
+  near the user's disk, and anything inlined in a tool call passes through the model's
+  context first — roughly 350k tokens per megabyte of base64. So a files value is
+  `[{url, name?, link?}]`, and `POST /l/:row/files` takes a `url` it downloads
+  server-side. The URL has to be https and reachable from the internet; a path on the
+  caller's own machine cannot be attached at all.
+- **The upload comes before the cell.** `LogProperty#files_are_attached` only lets a
+  cell name a blob already attached to that row, so `resolveFiles` posts every entry to
+  the row's files endpoint and builds the cell from what comes back. A refused upload
+  therefore leaves no cell behind.
+- **Entries are added, not replaced.** Every other kind's value replaces the cell, but
+  a files cell is a drawer and "add this file" is what gets asked for — replacing would
+  silently drop what was already in it. `null` empties the cell, and that is the only
+  removal offered here; taking one file out of several is the UI's job.
+- **`link: true` skips the download** and stores a plain link entry. Without it a
+  Google Doc URL downloads its login page and calls that the attachment.
+- **A files cell renders by name.** `formatValue` would otherwise hand `String()` an
+  array of entry objects and print `[object Object]` into the rows table.
+- **`cover` sets the banner on a row's page**, as `icon` sets its emoji. A built-in
+  cover (`/covers/cover_N.avif`) is a path of changologs' own and is stored as it is; an
+  https URL goes to `log[cover_url]`, which the server downloads and re-hosts so the
+  cover cannot rot. It rides along in the same write as the title and icon, so a cover
+  the server can't fetch fails the call rather than half-applying it.
+- **API refusals are unwrapped.** `apiRequest` turns a 422 into
+  `API error 422: {"error":"..."}`; `apiErrorMessage` digs the sentence back out, so a
+  tool answers "That file is larger than 15 MB" rather than a status line and some JSON.
+
 ## Testing
 
 `databases.test.ts` runs the dispatcher against a fake `ApiClient` that records each
 request: request paths and bodies, column-name mapping, rejecting unknown columns before
 any write, PATCH vs POST for cells, the search fallback for hidden rows, and the table
-output.
+output. For files and covers it also covers upload-then-cell ordering, adding to an
+existing cell, `null` emptying one without uploading, `link: true`, both built-in and
+downloaded covers, and the message a refused upload or cell write comes back with.

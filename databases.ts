@@ -31,19 +31,33 @@ export interface Row {
 interface DatabaseLog { id: number; hash_id: string; title: string; title_text?: string; board_hash_id: string }
 
 // Mirrors LogProperty::KINDS, LogColumn::COLORS and LogView::OPERATORS.
-export const COLUMN_KINDS = ["text", "number", "date", "datetime", "tags", "list", "checkbox", "url", "email", "phone", "person"];
+export const COLUMN_KINDS = ["text", "number", "date", "datetime", "tags", "list", "checkbox", "url", "email", "phone", "person", "files"];
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 const OPERATORS = ["is", "is_not", "contains", "does_not_contain", "starts_with", "ends_with", "is_empty", "is_not_empty"];
 const ROWS_PAGE_SIZE = 100;
 // How far a row lookup by title pages through a database before giving up.
 const MAX_ROW_PAGES = 10;
 
-const KIND_LABELS: Record<string, string> = { list: "list (select)", tags: "tags (multi-select)" };
+const KIND_LABELS: Record<string, string> = {
+  list: "list (select)", tags: "tags (multi-select)", files: "files (File & media)",
+};
 
 const VALUE_FORMATS =
   "Values by column kind: text/url/email/phone/list -> string; number -> number; date -> \"YYYY-MM-DD\"; " +
-  "datetime -> ISO 8601 with offset; checkbox -> boolean; tags -> array of strings; person -> array of user ids. " +
+  "datetime -> ISO 8601 with offset; checkbox -> boolean; tags -> array of strings; person -> array of user ids; " +
+  "files -> array of {\"url\": \"https://...\", \"name\": \"optional label\"}. " +
   "A list/tags value that isn't one of the column's choices is added as a new choice. null clears a cell.";
+
+// A files column is the one kind whose value isn't just data: each entry has
+// to become a file the row owns before a cell may name it. Said here rather
+// than left to the model to infer, because the failure is silent otherwise --
+// a plausible-looking entry is refused by the server, not written wrong.
+const FILES_FORMAT =
+  "For a files (File & media) column, each entry is {\"url\": \"https://...\"} with an optional \"name\". " +
+  "The server downloads the URL and keeps its own copy, so the file survives the URL going away; the URL must be " +
+  "https and reachable from the internet (a local path can't be read from here). Add \"link\": true to store the " +
+  "URL as a plain link instead of downloading it -- right for a page rather than a file, such as a Google Doc. " +
+  "Entries are ADDED to whatever the cell already holds; pass null for the column to empty it. A cell holds 10 files.";
 
 const databaseParam = {
   type: "string",
@@ -55,7 +69,7 @@ const workspaceParam = {
 };
 const valuesParam = {
   type: "object",
-  description: `Cell values keyed by column name, e.g. {"Status": "Done", "Due": "2026-11-01"}. ${VALUE_FORMATS}`,
+  description: `Cell values keyed by column name, e.g. {"Status": "Done", "Due": "2026-11-01"}. ${VALUE_FORMATS} ${FILES_FORMAT}`,
   additionalProperties: true,
 };
 const iconParam = {
@@ -63,6 +77,13 @@ const iconParam = {
   description:
     "Emoji shown as the row's icon, e.g. \"🍗\". An emoji always goes here, never at the start of title -- changologs " +
     "renders the icon next to the title itself, so an emoji in both shows up twice. Empty string removes the icon.",
+};
+const coverParam = {
+  type: "string",
+  description:
+    "Cover image banner across the top of the row's page. Either one of the five built-in covers " +
+    "(\"/covers/cover_1.avif\" ... \"/covers/cover_5.avif\") or an https URL to an image, which the server downloads " +
+    "and keeps so the cover can't rot. Empty string removes the cover.",
 };
 
 export const DATABASE_TOOLS = [
@@ -109,7 +130,7 @@ export const DATABASE_TOOLS = [
             type: "object",
             properties: {
               name: { type: "string", description: "Column name, 1-50 characters." },
-              kind: { type: "string", enum: COLUMN_KINDS, description: "Column kind. list is a single select, tags a multi-select." },
+              kind: { type: "string", enum: COLUMN_KINDS, description: "Column kind. list is a single select, tags a multi-select, files a File & media column holding uploads and links." },
               choices: { type: "array", items: { type: "string" }, description: "Choices for a list/tags column." },
             },
             required: ["name", "kind"],
@@ -140,7 +161,7 @@ export const DATABASE_TOOLS = [
       properties: {
         database: databaseParam,
         name: { type: "string", description: "Column name, 1-50 characters." },
-        kind: { type: "string", enum: COLUMN_KINDS, description: "Column kind. list is a single select, tags a multi-select." },
+        kind: { type: "string", enum: COLUMN_KINDS, description: "Column kind. list is a single select, tags a multi-select, files a File & media column holding uploads and links." },
         choices: { type: "array", items: { type: "string" }, description: "Choices for a list/tags column." },
         icon: { type: "string", description: "Optional emoji shown in the column header instead of the kind's icon." },
         position: { type: "number", description: "Index to insert the column at (0 = first). Defaults to last." },
@@ -184,13 +205,14 @@ export const DATABASE_TOOLS = [
   },
   {
     name: "add_database_row",
-    description: "Add a row to a database, with its title (the Name column), an optional emoji icon and optional cell values.",
+    description: "Add a row to a database, with its title (the Name column), an optional emoji icon, an optional cover image and optional cell values.",
     inputSchema: {
       type: "object",
       properties: {
         database: databaseParam,
         title: { type: "string", description: "The row's title, i.e. its Name. Plain text -- any emoji goes in icon." },
         icon: iconParam,
+        cover: coverParam,
         values: valuesParam,
         workspace_id: workspaceParam,
       },
@@ -200,7 +222,7 @@ export const DATABASE_TOOLS = [
   {
     name: "update_database_row",
     description:
-      "Change a database row's title, icon and/or cell values. Cells not mentioned are left as they are. " +
+      "Change a database row's title, icon, cover and/or cell values. Cells not mentioned are left as they are. " +
       "This is how a row gets an emoji -- set icon rather than writing the emoji into the title; setting icon also " +
       "takes a leftover emoji off the front of the title.",
     inputSchema: {
@@ -210,6 +232,7 @@ export const DATABASE_TOOLS = [
         row: { type: "string", description: "The row's title or row_id (from query_database_rows)." },
         title: { type: "string", description: "New title, if renaming. Plain text -- any emoji goes in icon." },
         icon: iconParam,
+        cover: coverParam,
         values: valuesParam,
         workspace_id: workspaceParam,
       },
@@ -386,9 +409,24 @@ async function findRow(api: ApiClient, db: DatabaseLog, ref: string, workspaceId
 export function formatValue(value: unknown, kind?: string): string {
   if (kind === "checkbox") return value === true ? "yes" : "no";
   if (value === null || value === undefined) return "";
+  if (kind === "files") return formatFiles(value);
   if (Array.isArray(value)) return value.map(String).join(", ");
   if (typeof value === "boolean") return value ? "yes" : "";
   return String(value);
+}
+
+// A files cell is an array of entry objects, which String() would render as
+// "[object Object]". Its name is the only part worth a table cell -- a blob
+// id means nothing to a reader, and the URL is minted fresh on every read.
+function formatFiles(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return String(entry);
+      const { name, url } = entry as { name?: string; url?: string };
+      return name || url || "file";
+    })
+    .join(", ");
 }
 
 function tableCell(text: string): string {
@@ -452,6 +490,73 @@ function isEmpty(value: unknown): boolean {
   return value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
 }
 
+// The API refuses with {"error": "..."} (or {"errors": [...]}), which
+// apiRequest wraps into `API error 422: {"error":"..."}`. Dig the sentence
+// back out, so a tool says what is actually wrong instead of quoting a
+// status line and a blob of JSON at the model.
+export function apiErrorMessage(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const body = /^API error \d+: ([\s\S]*)$/.exec(text)?.[1];
+  if (!body) return text;
+  try {
+    const parsed = JSON.parse(body);
+    const message = parsed.error ?? (Array.isArray(parsed.errors) ? parsed.errors.join("; ") : undefined);
+    return message || body;
+  } catch {
+    return body;
+  }
+}
+
+interface FileInput { url?: string; name?: string; link?: boolean }
+
+// Turns what a tool call names into the entries a files cell stores.
+//
+// A cell can only name a blob attached to its own row (LogProperty's
+// files_are_attached), so every upload goes through the row's files endpoint
+// first -- which, given a `url` rather than bytes, downloads it server-side.
+// The MCP server runs nowhere near the user's disk, so a URL is the only
+// thing it can be handed.
+//
+// Entries are added to what the cell already holds rather than replacing it:
+// a files cell is a drawer, and "add this file" is what anyone asks for.
+// Emptying it is `null`, which never reaches here.
+async function resolveFiles(api: ApiClient, row: Row, current: unknown, value: unknown): Promise<unknown[]> {
+  if (!Array.isArray(value)) {
+    throw new Error(`A files value is a list of {"url": "https://...", "name": "..."}, not ${JSON.stringify(value)}.`);
+  }
+  const existing = Array.isArray(current) ? current : [];
+  const added: unknown[] = [];
+  for (const raw of value) {
+    const input: FileInput = typeof raw === "string" ? { url: raw } : (raw as FileInput) ?? {};
+    const url = input.url?.trim();
+    if (!url) throw new Error(`Every file needs a url; got ${JSON.stringify(raw)}.`);
+    added.push(input.link ? { type: "link", url, name: input.name || url } : await uploadFromUrl(api, row, url, input.name));
+  }
+  return [...existing, ...added];
+}
+
+async function uploadFromUrl(api: ApiClient, row: Row, url: string, name?: string): Promise<unknown> {
+  let uploaded: { blob_id: string; name: string; content_type: string; size: number };
+  try {
+    uploaded = await api(`/l/${row.hash_id}/files`, { method: "POST", body: JSON.stringify({ url }) });
+  } catch (error) {
+    throw new Error(`Couldn't attach ${url}: ${apiErrorMessage(error)}`);
+  }
+  // The name the call gave wins over the one the download came with -- it is
+  // what the caller meant the tile to read.
+  return { type: "upload", blob_id: uploaded.blob_id, name: name || uploaded.name,
+    content_type: uploaded.content_type, size: uploaded.size };
+}
+
+// A cover is either one of the built-in images (a path of ours, stored as
+// it is) or a URL the server downloads and re-hosts, so the cover outlives
+// the URL. An empty string takes it off.
+export function coverBody(cover: string): Record<string, unknown> {
+  const value = cover.trim();
+  if (!value) return { cover: null };
+  return /^https?:\/\//i.test(value) ? { cover_url: value } : { cover: value };
+}
+
 // Writes each value into the row's cell for that column: a PATCH when the
 // cell exists, else a POST, which the API binds to the column of that name.
 // Names that aren't columns are rejected up front rather than letting the
@@ -461,18 +566,30 @@ async function writeValues(
 ): Promise<string[]> {
   const entries = Object.entries(values).map(([name, value]) => ({ column: findColumn(columns, name), value }));
   const written: string[] = [];
-  for (const { column, value } of entries) {
+  for (const { column, value: raw } of entries) {
     const cell = row.properties.find((p) => p.column_id === column.id) ??
       row.properties.find((p) => sameName(p.name, column.name));
-    if (cell) {
-      await api(`/l/${row.hash_id}/properties/${cell.id}`, { method: "PATCH", body: JSON.stringify({ value }) });
-    } else if (isEmpty(value)) {
-      continue;
-    } else {
-      await api(`/l/${row.hash_id}/properties`, {
-        method: "POST",
-        body: JSON.stringify({ name: column.name, kind: column.kind, value }),
-      });
+    // A files value is turned into stored entries first, which uploads each
+    // one to the row. Done per column rather than up front because it needs
+    // the cell that is already there to add to.
+    const value = column.kind === "files" && !isEmpty(raw)
+      ? await resolveFiles(api, row, cell?.value, raw)
+      : raw;
+    if (isEmpty(value) && !cell) continue;
+    // Wrapped because a cell the server refuses is the common way a write
+    // fails -- a value past a cap, a person who isn't a member -- and the
+    // model needs the sentence, not "API error 422" and a blob of JSON.
+    try {
+      if (cell) {
+        await api(`/l/${row.hash_id}/properties/${cell.id}`, { method: "PATCH", body: JSON.stringify({ value }) });
+      } else {
+        await api(`/l/${row.hash_id}/properties`, {
+          method: "POST",
+          body: JSON.stringify({ name: column.name, kind: column.kind, value }),
+        });
+      }
+    } catch (error) {
+      throw new Error(`Couldn't write ${column.name}: ${apiErrorMessage(error)}`);
     }
     written.push(`${column.name}: ${formatValue(value, column.kind) || "(cleared)"}`);
   }
@@ -600,9 +717,17 @@ export async function callDatabaseTool(
     if (icon) log.emoji = icon;
     const data = await api(`/logs${workspaceQuery(workspaceId)}`, { method: "POST", body: JSON.stringify({ log }) });
     const row: Row = { ...data.log, properties: [] };
+    // After the row exists, like the files a cell names: a cover URL is
+    // downloaded onto the row, which has to be there to hang it on.
+    if (a.cover !== undefined) {
+      await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, {
+        method: "PUT", body: JSON.stringify({ log: coverBody(a.cover as string) }),
+      });
+    }
     const written = await writeValues(api, row, columns, values);
     const named = `"${titleOf(row)}"${icon ? ` with the icon ${icon}` : ""}`;
-    return `Added row ${named} (row_id: ${row.hash_id}) to "${titleOf(db)}"${written.length ? ` — ${written.join("; ")}` : ""}.`;
+    const cover = a.cover ? ` with a cover` : "";
+    return `Added row ${named}${cover} (row_id: ${row.hash_id}) to "${titleOf(db)}"${written.length ? ` — ${written.join("; ")}` : ""}.`;
   }
 
   if (name === "update_database_row") {
@@ -613,16 +738,24 @@ export async function callDatabaseTool(
     // Title and icon are one write. Setting the icon also cleans an emoji off
     // the front of the title, which is how a row an earlier call wrote as
     // "🍗 Chicken" stops showing the emoji twice.
-    if (a.title !== undefined || a.icon !== undefined) {
+    // The cover rides along: it is the same endpoint, and a cover URL the
+    // server can't fetch should fail the call rather than half-apply it.
+    if (a.title !== undefined || a.icon !== undefined || a.cover !== undefined) {
       const split = splitIcon((a.title as string | undefined) ?? titleOf(row), a.icon as string | undefined);
       const log: Record<string, unknown> = {};
       if (a.title !== undefined || split.title !== titleOf(row)) log.title = split.title;
       if (a.icon !== undefined) log.emoji = (a.icon as string) || null;
       else if (split.icon) log.emoji = split.icon;
+      if (a.cover !== undefined) Object.assign(log, coverBody(a.cover as string));
       if (Object.keys(log).length) {
-        await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, { method: "PUT", body: JSON.stringify({ log }) });
+        try {
+          await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, { method: "PUT", body: JSON.stringify({ log }) });
+        } catch (error) {
+          throw new Error(apiErrorMessage(error));
+        }
         if (log.title !== undefined) changes.push(`title: ${log.title}`);
         if (log.emoji !== undefined) changes.push(log.emoji ? `icon: ${log.emoji}` : "icon: removed");
+        if (a.cover !== undefined) changes.push(a.cover ? `cover: ${a.cover}` : "cover: removed");
       }
     }
     changes.push(...await writeValues(api, row, columns, values));

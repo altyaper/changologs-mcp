@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChoices, callDatabaseTool, formatValue, renderRowsTable, splitIcon, type Column, type Row } from "./databases.js";
+import { apiErrorMessage, buildChoices, callDatabaseTool, coverBody, formatValue, renderRowsTable, splitIcon, type Column, type Row } from "./databases.js";
 
 const DB = { id: 7, hash_id: "dbhash", title: "Tasks", title_text: "Tasks", board_hash_id: "board1" };
 const COLUMNS: Column[] = [
@@ -267,6 +267,213 @@ describe("formatting", () => {
 
   it("gives new choices the next colors", () => {
     expect(buildChoices(["x", "y"]).map((c) => c.color)).toEqual(["gray", "brown"]);
+  });
+});
+
+// A files (File & media) column: the cell holds entries, and each upload has
+// to reach the row through its files endpoint before the cell may name it.
+describe("files cells", () => {
+  const FILE_COLUMNS: Column[] = [
+    ...COLUMNS,
+    { id: 4, name: "Attachments", kind: "files", icon: null, position: 3, options: {} },
+  ];
+  const UPLOADED = { blob_id: "812", name: "q3.pdf", content_type: "application/pdf", size: 4096 };
+
+  function filesApi(row: Row = ROW, extra: Record<string, any> = {}) {
+    return fakeApi({
+      "GET /logs/databases": () => ({ logs: [DB] }),
+      "GET /l/dbhash/rows": () => ({ columns: FILE_COLUMNS, views: VIEWS, rows: [row], next_cursor: null }),
+      "POST /l/row1/files": () => UPLOADED,
+      "POST /l/row1/properties": () => ({ properties: [] }),
+      "PATCH /l/row1/properties/101": () => ({ properties: [] }),
+      ...extra,
+    });
+  }
+
+  it("uploads each url to the row, then names the blob in the cell", async () => {
+    const { api, calls } = filesApi();
+
+    const text = await callDatabaseTool(
+      "update_database_row",
+      { database: "Tasks", row: "Write docs", values: { Attachments: [{ url: "https://example.com/q3.pdf", name: "Q3" }] } },
+      api,
+    );
+
+    expect(calls.filter((c) => c.path === "/l/row1/files").map((c) => c.body)).toEqual([
+      { url: "https://example.com/q3.pdf" },
+    ]);
+    // The cell is written only after the upload, and names the blob it made.
+    expect(calls.find((c) => c.path === "/l/row1/properties")!.body).toEqual({
+      name: "Attachments", kind: "files",
+      value: [{ type: "upload", blob_id: "812", name: "Q3", content_type: "application/pdf", size: 4096 }],
+    });
+    expect(text).toContain("Attachments: Q3");
+  });
+
+  it("falls back to the downloaded file's own name", async () => {
+    const { api, calls } = filesApi();
+    await callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: ["https://example.com/q3.pdf"] } }, api,
+    );
+    expect(calls.find((c) => c.path === "/l/row1/properties")!.body.value[0].name).toBe("q3.pdf");
+  });
+
+  it("adds to what the cell already holds rather than replacing it", async () => {
+    const withFile: Row = {
+      ...ROW,
+      properties: [
+        ...ROW.properties,
+        { id: 101, name: "Attachments", kind: "files",
+          value: [{ id: "aaaa1111", type: "upload", blob_id: "1", name: "old.pdf", url: "/rails/x" }], column_id: 4 },
+      ],
+    };
+    const { api, calls } = filesApi(withFile);
+
+    await callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: ["https://example.com/q3.pdf"] } }, api,
+    );
+
+    const written = calls.find((c) => c.path === "/l/row1/properties/101")!.body.value;
+    expect(written.map((e: any) => e.name)).toEqual(["old.pdf", "q3.pdf"]);
+  });
+
+  it("empties the cell when the value is null, without uploading", async () => {
+    const withFile: Row = {
+      ...ROW,
+      properties: [...ROW.properties, { id: 101, name: "Attachments", kind: "files", value: [{ name: "old.pdf" }], column_id: 4 }],
+    };
+    const { api, calls } = filesApi(withFile);
+
+    await callDatabaseTool("update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: null } }, api);
+
+    expect(calls.some((c) => c.path === "/l/row1/files")).toBe(false);
+    expect(calls.find((c) => c.path === "/l/row1/properties/101")!.body).toEqual({ value: null });
+  });
+
+  it("stores a link entry without downloading anything", async () => {
+    const { api, calls } = filesApi();
+    await callDatabaseTool(
+      "update_database_row",
+      { database: "Tasks", row: "Write docs", values: { Attachments: [{ url: "https://docs.example.com/x", link: true }] } },
+      api,
+    );
+    expect(calls.some((c) => c.path === "/l/row1/files")).toBe(false);
+    expect(calls.find((c) => c.path === "/l/row1/properties")!.body.value).toEqual([
+      { type: "link", url: "https://docs.example.com/x", name: "https://docs.example.com/x" },
+    ]);
+  });
+
+  it("says why an upload was refused, and writes no cell", async () => {
+    const { api, calls } = filesApi(ROW, {
+      "POST /l/row1/files": () => {
+        throw new Error('API error 422: {"error":"That file is larger than 15 MB."}');
+      },
+    });
+
+    await expect(callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: ["https://example.com/big.zip"] } }, api,
+    )).rejects.toThrow("Couldn't attach https://example.com/big.zip: That file is larger than 15 MB.");
+    expect(calls.some((c) => c.path.startsWith("/l/row1/properties"))).toBe(false);
+  });
+
+  it("says why the cell itself was refused, such as the 10-file cap", async () => {
+    const { api } = filesApi(ROW, {
+      "POST /l/row1/properties": () => {
+        throw new Error('API error 422: {"errors":["Value must be at most 10 files"]}');
+      },
+    });
+
+    await expect(callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: ["https://example.com/q3.pdf"] } }, api,
+    )).rejects.toThrow("Couldn't write Attachments: Value must be at most 10 files");
+  });
+
+  it("refuses a value that isn't a list of files", async () => {
+    const { api } = filesApi();
+    await expect(callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", values: { Attachments: "q3.pdf" } }, api,
+    )).rejects.toThrow("A files value is a list of");
+  });
+
+  it("renders a files cell by name, not as [object Object]", () => {
+    const entries = [{ type: "upload", blob_id: "1", name: "q3.pdf" }, { type: "link", url: "https://x.test/a" }];
+    expect(formatValue(entries, "files")).toBe("q3.pdf, https://x.test/a");
+    expect(formatValue(null, "files")).toBe("");
+  });
+
+  it("offers files as a column kind", async () => {
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "POST /l/dbhash/columns": () => ({ columns: FILE_COLUMNS }),
+    });
+    const text = await callDatabaseTool("add_database_column", { database: "Tasks", name: "Attachments", kind: "files" }, api);
+    expect(calls.find((c) => c.method === "POST")!.body).toEqual({ name: "Attachments", kind: "files" });
+    expect(text).toContain("Attachments — files (File & media)");
+  });
+});
+
+describe("covers", () => {
+  it("sends a built-in cover as it is and an https one to be downloaded", () => {
+    expect(coverBody("/covers/cover_2.avif")).toEqual({ cover: "/covers/cover_2.avif" });
+    expect(coverBody("https://example.com/hills.png")).toEqual({ cover_url: "https://example.com/hills.png" });
+    expect(coverBody("")).toEqual({ cover: null });
+    expect(coverBody("  ")).toEqual({ cover: null });
+  });
+
+  it("sets a row's cover alongside its title, in one write", async () => {
+    const { api, calls } = fakeApi({ ...baseRoutes, "PUT /boards/board1/logs/row1": () => ({ log: {} }) });
+
+    const text = await callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", title: "Docs", cover: "https://example.com/hills.png" }, api,
+    );
+
+    expect(calls.filter((c) => c.method === "PUT").map((c) => c.body)).toEqual([
+      { log: { title: "Docs", cover_url: "https://example.com/hills.png" } },
+    ]);
+    expect(text).toContain("cover: https://example.com/hills.png");
+  });
+
+  it("covers a new row once it exists", async () => {
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "POST /logs": (body) => ({ log: { id: 21, hash_id: "row2", title: body.log.title, title_text: body.log.title } }),
+      "PUT /boards/board1/logs/row2": () => ({ log: {} }),
+    });
+
+    const text = await callDatabaseTool(
+      "add_database_row", { database: "Tasks", title: "New", cover: "/covers/cover_1.avif" }, api,
+    );
+
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ log: { cover: "/covers/cover_1.avif" } });
+    expect(text).toBe('Added row "New" with a cover (row_id: row2) to "Tasks".');
+  });
+
+  it("removes a cover with an empty string", async () => {
+    const { api, calls } = fakeApi({ ...baseRoutes, "PUT /boards/board1/logs/row1": () => ({ log: {} }) });
+    const text = await callDatabaseTool("update_database_row", { database: "Tasks", row: "Write docs", cover: "" }, api);
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ log: { cover: null } });
+    expect(text).toContain("cover: removed");
+  });
+
+  it("says why a cover was refused", async () => {
+    const { api } = fakeApi({
+      ...baseRoutes,
+      "PUT /boards/board1/logs/row1": () => {
+        throw new Error('API error 422: {"errors":["That URL is application/pdf, and a cover has to be an image."]}');
+      },
+    });
+    await expect(callDatabaseTool(
+      "update_database_row", { database: "Tasks", row: "Write docs", cover: "https://example.com/q3.pdf" }, api,
+    )).rejects.toThrow("That URL is application/pdf, and a cover has to be an image.");
+  });
+});
+
+describe("apiErrorMessage", () => {
+  it("digs the reason out of a wrapped API error", () => {
+    expect(apiErrorMessage(new Error('API error 422: {"error":"Too large"}'))).toBe("Too large");
+    expect(apiErrorMessage(new Error('API error 422: {"errors":["a","b"]}'))).toBe("a; b");
+    expect(apiErrorMessage(new Error("API error 500: <html>oops</html>"))).toBe("<html>oops</html>");
+    expect(apiErrorMessage(new Error("network down"))).toBe("network down");
   });
 });
 
