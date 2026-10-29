@@ -114,3 +114,25 @@ existing cell, `null` emptying one without uploading, `link: true`, both built-i
 downloaded covers, and the message a refused upload or cell write comes back with.
 Rollback has three: a refused upload and a refused cover each trash the new row, and a
 rollback that itself fails still reports the original failure.
+
+## Uploading a file from the user's own machine
+
+`prepare_file_upload` — added after the URL-only path turned out not to cover the
+commonest ask. See `docs/plans/2026-10-29-local-file-upload-tickets-design.md` in
+changologs for the ticket itself.
+
+- **The bytes, the server and the credential are in three different places.** The file
+  is on the user's machine; this server is a Worker that never sees it; the OAuth token
+  is here, not in the shell that can reach the file. So changologs mints a one-shot
+  ticket and the shell spends it: `prepare_file_upload` returns a `curl` that uploads
+  the file and writes the cell in one step. Nothing but the command crosses the
+  conversation.
+- **The column is resolved before the ticket is minted.** A typo then costs nothing,
+  and the server is asked for the column's real name rather than the casing the call
+  used. A column that isn't a files column is refused here too.
+- **The path is single-quoted**, because a file on a desktop so often has a space in
+  its name; a literal quote in the name is escaped.
+- **The descriptions say a local file *is* uploadable.** The bug being fixed was an AI
+  reading "a local path can't be read from here" on the files value and telling the
+  user changologs could not do it. Both that text and the new tool's description now
+  point at `prepare_file_upload` explicitly.

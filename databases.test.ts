@@ -431,6 +431,83 @@ describe("files cells", () => {
     )).rejects.toThrow("Couldn't attach https://example.com/q3.pdf: That URL answered 400.");
   });
 
+  // A local file is the one thing a URL value can't express, so the tool
+  // hands back a command that carries the bytes instead.
+  describe("prepare_file_upload", () => {
+    const TICKET = {
+      token: "tok_abc", upload_url: "https://changologs.com/files/upload",
+      expires_in: 600, max_bytes: 15728640,
+    };
+
+    function ticketApi(extra: Record<string, any> = {}) {
+      return fakeApi({
+        "GET /logs/databases": () => ({ logs: [DB] }),
+        "GET /l/dbhash/rows": () => ({ columns: FILE_COLUMNS, views: VIEWS, rows: [ROW], next_cursor: null }),
+        "POST /l/row1/files/ticket": () => TICKET,
+        ...extra,
+      });
+    }
+
+    it("mints a ticket for the column and writes the command out ready to run", async () => {
+      const { api, calls } = ticketApi();
+
+      const text = await callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", column: "attachments", path: "/Users/me/q3.pdf",
+      }, api);
+
+      // The column's real name, not the casing the call used.
+      expect(calls.find((c) => c.path === "/l/row1/files/ticket")!.body).toEqual({ column: "Attachments" });
+      expect(text).toContain("https://changologs.com/files/upload");
+      expect(text).toContain("-F 'token=tok_abc'");
+      expect(text).toContain("-F file[file]=@'/Users/me/q3.pdf'");
+      expect(text).toContain("10 minutes");
+      expect(text).toContain("15 MB");
+    });
+
+    it("quotes a path with spaces, and escapes one with a quote in it", async () => {
+      const { api } = ticketApi();
+
+      const spaced = await callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", column: "Attachments", path: "/Users/me/Q3 report.pdf",
+      }, api);
+      expect(spaced).toContain("@'/Users/me/Q3 report.pdf'");
+
+      const quoted = await callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", column: "Attachments", path: "/Users/me/Bob's file.pdf",
+      }, api);
+      expect(quoted).toContain(`@'/Users/me/Bob'\\''s file.pdf'`);
+    });
+
+    it("asks for no column when none is given, and says so", async () => {
+      const { api, calls } = ticketApi();
+
+      const text = await callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", path: "/Users/me/q3.pdf",
+      }, api);
+
+      expect(calls.find((c) => c.path === "/l/row1/files/ticket")!.body).toEqual({});
+      expect(text).toContain('the page "Write docs"');
+    });
+
+    it("refuses a column that isn't a files one, before minting anything", async () => {
+      const { api, calls } = ticketApi();
+
+      await expect(callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", column: "Status", path: "/Users/me/q3.pdf",
+      }, api)).rejects.toThrow('Column "Status" is list, not a File & media column.');
+      expect(calls.some((c) => c.path.endsWith("/files/ticket"))).toBe(false);
+    });
+
+    it("refuses a column the database doesn't have, before minting anything", async () => {
+      const { api, calls } = ticketApi();
+
+      await expect(callDatabaseTool("prepare_file_upload", {
+        database: "Tasks", row: "Write docs", column: "Nope", path: "/Users/me/q3.pdf",
+      }, api)).rejects.toThrow('No column named "Nope"');
+      expect(calls.some((c) => c.path.endsWith("/files/ticket"))).toBe(false);
+    });
+  });
+
   it("says why the cell itself was refused, such as the 10-file cap", async () => {
     const { api } = filesApi(ROW, {
       "POST /l/row1/properties": () => {

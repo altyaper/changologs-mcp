@@ -55,9 +55,12 @@ const VALUE_FORMATS =
 const FILES_FORMAT =
   "For a files (File & media) column, each entry is {\"url\": \"https://...\"} with an optional \"name\". " +
   "The server downloads the URL and keeps its own copy, so the file survives the URL going away; the URL must be " +
-  "https and reachable from the internet (a local path can't be read from here). Add \"link\": true to store the " +
+  "https and reachable from the internet. Add \"link\": true to store the " +
   "URL as a plain link instead of downloading it -- right for a page rather than a file, such as a Google Doc. " +
-  "Entries are ADDED to whatever the cell already holds; pass null for the column to empty it. A cell holds 10 files.";
+  "Entries are ADDED to whatever the cell already holds; pass null for the column to empty it. A cell holds 10 files. " +
+  "A file on the USER'S OWN MACHINE cannot go here, because this takes URLs only -- but it can still be " +
+  "uploaded: call prepare_file_upload, which hands back a shell command that puts the local file in the cell. " +
+  "Never tell the user that attaching a local file is unsupported.";
 
 const databaseParam = {
   type: "string",
@@ -237,6 +240,39 @@ export const DATABASE_TOOLS = [
         workspace_id: workspaceParam,
       },
       required: ["database", "row"],
+    },
+  },
+  {
+    name: "prepare_file_upload",
+    description:
+      "Attach a file that is on the user's own machine to a File & media cell. THIS IS HOW A LOCAL FILE GETS " +
+      "UPLOADED -- a local path cannot go in update_database_row's values, which only takes URLs, but it is not a " +
+      "thing changologs can't do. Call this, then run the shell command it returns.\n" +
+      "It answers with a one-shot upload command: run that command and the file is attached and the cell written. " +
+      "The file's bytes go straight from the machine to changologs over curl, so they never pass through the " +
+      "conversation. The command works for ten minutes and once only; call this again for another file.\n" +
+      "Use it for anything on disk -- images, PDFs, anything. For a file that already has an https URL, skip this " +
+      "and pass the URL to update_database_row instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        database: databaseParam,
+        row: { type: "string", description: "The row's title or row_id (from query_database_rows)." },
+        column: {
+          type: "string",
+          description:
+            "Name of the File & media column the file goes in. Omit to attach the file to the row's page " +
+            "without filling a cell.",
+        },
+        path: {
+          type: "string",
+          description:
+            "Absolute path of the file on the user's machine, e.g. \"/Users/me/Downloads/q3.pdf\". Used to write " +
+            "the command out ready to run; the file is never read here.",
+        },
+        workspace_id: workspaceParam,
+      },
+      required: ["database", "row", "path"],
     },
   },
   {
@@ -596,6 +632,32 @@ async function writeValues(
   return written;
 }
 
+interface UploadTicket { token: string; upload_url: string; expires_in: number; max_bytes: number }
+
+// The answer to prepare_file_upload: a command to run, and enough around it
+// that the model runs it rather than explaining it.
+//
+// Single-quoted path, because a file on a desktop so often has spaces in its
+// name and an unquoted one would arrive as several arguments. A literal
+// single quote in a name is the one case that needs escaping, so it is.
+export function uploadInstructions(path: string, ticket: UploadTicket, row: Row, column?: string): string {
+  const quoted = `'${String(path).replace(/'/g, `'\\''`)}'`;
+  const command = `curl -sS -X POST ${ticket.upload_url} \\\n` +
+    `  -F 'token=${ticket.token}' \\\n` +
+    `  -F file[file]=@${quoted}`;
+  const target = column ? `the "${column}" cell of row "${titleOf(row)}"` : `the page "${titleOf(row)}"`;
+  return [
+    `Run this command to upload ${path} to ${target}:`,
+    "",
+    command,
+    "",
+    `It attaches the file${column ? " and writes the cell" : ""} in one step -- nothing else to call afterwards. ` +
+    `Good for ${Math.round(ticket.expires_in / 60)} minutes and one upload; ` +
+    `files up to ${Math.round(ticket.max_bytes / (1024 * 1024))} MB. ` +
+    "Call prepare_file_upload again for the next file.",
+  ].join("\n");
+}
+
 // Runs the writes that can only happen once a row exists, and trashes the row
 // if one of them fails, so a failed add leaves no half-made row behind.
 //
@@ -785,6 +847,22 @@ export async function callDatabaseTool(
     changes.push(...await writeValues(api, row, columns, values));
     if (!changes.length) return `Nothing to change on "${titleOf(row)}".`;
     return `Updated row "${titleOf(row)}" (row_id: ${row.hash_id}) — ${changes.join("; ")}.`;
+  }
+
+  if (name === "prepare_file_upload") {
+    const { columns } = await fetchSchema(api, db);
+    const row = await findRow(api, db, a.row as string, workspaceId);
+    // Resolved here so a typo is caught before a ticket is minted, and so the
+    // column's real name is what the server is asked for.
+    const column = a.column === undefined ? undefined : findColumn(columns, a.column as string);
+    if (column && column.kind !== "files") {
+      throw new Error(`Column "${column.name}" is ${column.kind}, not a File & media column.`);
+    }
+    const ticket = await api(`/l/${row.hash_id}/files/ticket`, {
+      method: "POST",
+      body: JSON.stringify(column ? { column: column.name } : {}),
+    });
+    return uploadInstructions(a.path as string, ticket, row, column?.name);
   }
 
   if (name === "delete_database_row") {
