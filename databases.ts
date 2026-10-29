@@ -596,6 +596,24 @@ async function writeValues(
   return written;
 }
 
+// Runs the writes that can only happen once a row exists, and trashes the row
+// if one of them fails, so a failed add leaves no half-made row behind.
+//
+// The rollback is best-effort: if it too fails there is nothing further to try,
+// and the original failure is the one worth reporting, so it is what propagates.
+async function rollBackRowOnFailure<T>(api: ApiClient, row: Row, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (error) {
+    try {
+      await api(`/l/${row.hash_id}`, { method: "DELETE" });
+    } catch {
+      // Keeping the original failure; the stray row is the lesser problem.
+    }
+    throw error;
+  }
+}
+
 function filtersFor(columns: Column[], filters: Array<{ column: string; operator: string; value?: string }>): Filter[] {
   return filters.map((f) => {
     if (!OPERATORS.includes(f.operator)) throw new Error(`Unknown operator "${f.operator}". Use one of: ${OPERATORS.join(", ")}.`);
@@ -717,14 +735,20 @@ export async function callDatabaseTool(
     if (icon) log.emoji = icon;
     const data = await api(`/logs${workspaceQuery(workspaceId)}`, { method: "POST", body: JSON.stringify({ log }) });
     const row: Row = { ...data.log, properties: [] };
-    // After the row exists, like the files a cell names: a cover URL is
-    // downloaded onto the row, which has to be there to hang it on.
-    if (a.cover !== undefined) {
-      await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, {
-        method: "PUT", body: JSON.stringify({ log: coverBody(a.cover as string) }),
-      });
-    }
-    const written = await writeValues(api, row, columns, values);
+    // The cover and the cells can only be written once the row exists, so
+    // either can fail with the row already created. An add that reports a
+    // failure has to leave nothing behind -- otherwise a retry of the same
+    // call, which is what a refused download invites, adds the row twice.
+    const written = await rollBackRowOnFailure(api, row, async () => {
+      // A cover URL is downloaded onto the row, which has to be there to
+      // hang it on.
+      if (a.cover !== undefined) {
+        await api(`/boards/${db.board_hash_id}/logs/${row.hash_id}`, {
+          method: "PUT", body: JSON.stringify({ log: coverBody(a.cover as string) }),
+        });
+      }
+      return writeValues(api, row, columns, values);
+    });
     const named = `"${titleOf(row)}"${icon ? ` with the icon ${icon}` : ""}`;
     const cover = a.cover ? ` with a cover` : "";
     return `Added row ${named}${cover} (row_id: ${row.hash_id}) to "${titleOf(db)}"${written.length ? ` — ${written.join("; ")}` : ""}.`;

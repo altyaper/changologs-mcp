@@ -94,6 +94,15 @@ Added after the `files` property kind shipped in changologs — see
 - **API refusals are unwrapped.** `apiRequest` turns a 422 into
   `API error 422: {"error":"..."}`; `apiErrorMessage` digs the sentence back out, so a
   tool answers "That file is larger than 15 MB" rather than a status line and some JSON.
+- **A failed `add_database_row` takes its row back out.** The cover and the cells can
+  only be written once the row exists, so either can fail with the row already created.
+  Found while testing the shipped feature: a host that refused the download (an image
+  CDN answering 400) reported "Couldn't attach …" and left a titled, empty row behind —
+  and since retrying is the obvious next move after a refused download, the retry made a
+  second row. `rollBackRowOnFailure` wraps everything after the create and trashes the
+  row if any of it throws, so a failed add leaves nothing. The rollback is best-effort:
+  if the DELETE fails too, the original failure is the one worth reporting, so that is
+  what propagates. `update_database_row` needs none of this — its row was already there.
 
 ## Testing
 
@@ -103,3 +112,5 @@ any write, PATCH vs POST for cells, the search fallback for hidden rows, and the
 output. For files and covers it also covers upload-then-cell ordering, adding to an
 existing cell, `null` emptying one without uploading, `link: true`, both built-in and
 downloaded covers, and the message a refused upload or cell write comes back with.
+Rollback has three: a refused upload and a refused cover each trash the new row, and a
+rollback that itself fails still reports the original failure.

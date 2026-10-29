@@ -376,6 +376,61 @@ describe("files cells", () => {
     expect(calls.some((c) => c.path.startsWith("/l/row1/properties"))).toBe(false);
   });
 
+  // A refused download is the common way an add fails, and retrying it is the
+  // obvious next move -- so the row the add already created has to go, or the
+  // retry leaves two.
+  it("trashes the new row when an upload it was adding fails", async () => {
+    const { api, calls } = fakeApi({
+      "GET /logs/databases": () => ({ logs: [DB] }),
+      "GET /l/dbhash/rows": () => ({ columns: FILE_COLUMNS, views: VIEWS, rows: [ROW], next_cursor: null }),
+      "POST /logs": () => ({ log: { id: 21, hash_id: "row2", title: "New", title_text: "New" } }),
+      "POST /l/row2/files": () => {
+        throw new Error('API error 422: {"error":"That URL answered 400."}');
+      },
+      "DELETE /l/row2": () => ({}),
+    });
+
+    await expect(callDatabaseTool(
+      "add_database_row", { database: "Tasks", title: "New", values: { Attachments: ["https://example.com/q3.pdf"] } }, api,
+    )).rejects.toThrow("Couldn't attach https://example.com/q3.pdf: That URL answered 400.");
+    expect(calls.some((c) => c.method === "DELETE" && c.path === "/l/row2")).toBe(true);
+  });
+
+  it("trashes the new row when its cover is refused", async () => {
+    const { api, calls } = fakeApi({
+      ...baseRoutes,
+      "POST /logs": () => ({ log: { id: 21, hash_id: "row2", title: "New", title_text: "New" } }),
+      "PUT /boards/board1/logs/row2": () => {
+        throw new Error('API error 422: {"error":"That URL is application/pdf, and a cover has to be an image."}');
+      },
+      "DELETE /l/row2": () => ({}),
+    });
+
+    await expect(callDatabaseTool(
+      "add_database_row", { database: "Tasks", title: "New", cover: "https://example.com/q3.pdf" }, api,
+    )).rejects.toThrow();
+    expect(calls.some((c) => c.method === "DELETE" && c.path === "/l/row2")).toBe(true);
+  });
+
+  // Nothing further to try, and the download failure is the useful sentence.
+  it("still reports the original failure when the rollback also fails", async () => {
+    const { api } = fakeApi({
+      "GET /logs/databases": () => ({ logs: [DB] }),
+      "GET /l/dbhash/rows": () => ({ columns: FILE_COLUMNS, views: VIEWS, rows: [ROW], next_cursor: null }),
+      "POST /logs": () => ({ log: { id: 21, hash_id: "row2", title: "New", title_text: "New" } }),
+      "POST /l/row2/files": () => {
+        throw new Error('API error 422: {"error":"That URL answered 400."}');
+      },
+      "DELETE /l/row2": () => {
+        throw new Error("API error 500");
+      },
+    });
+
+    await expect(callDatabaseTool(
+      "add_database_row", { database: "Tasks", title: "New", values: { Attachments: ["https://example.com/q3.pdf"] } }, api,
+    )).rejects.toThrow("Couldn't attach https://example.com/q3.pdf: That URL answered 400.");
+  });
+
   it("says why the cell itself was refused, such as the 10-file cap", async () => {
     const { api } = filesApi(ROW, {
       "POST /l/row1/properties": () => {
